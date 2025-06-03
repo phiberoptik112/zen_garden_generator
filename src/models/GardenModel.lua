@@ -24,6 +24,22 @@ function GardenModel:new()
         boundaryPadding = 20
     }
     
+    model.rakeProfiles = {
+        {name = "Fine", spacing = 2, thickness = 1, length = 15},
+        {name = "Medium", spacing = 4, thickness = 2, length = 20},
+        {name = "Coarse", spacing = 6, thickness = 3, length = 25},
+        {name = "Wide", spacing = 8, thickness = 2, length = 30}
+    }
+    model.selectedRakeProfile = 1
+    
+    model.ui = {
+        mouseX = 0,
+        mouseY = 0,
+        hoveredElement = nil,
+        pressedElement = nil,
+        draggingSlider = nil
+    }
+    
     return model
 end
 
@@ -66,12 +82,14 @@ function GardenModel:getRockAt(x, y)
 end
 
 function GardenModel:addRakeStroke(x1, y1, x2, y2)
+    local profile = self.rakeProfiles[self.selectedRakeProfile]
     local stroke = {
         x1 = x1,
         y1 = y1,
         x2 = x2,
         y2 = y2,
-        time = love.timer.getTime()
+        time = love.timer.getTime(),
+        profile = profile
     }
     table.insert(self.rakePattern, stroke)
 end
@@ -159,6 +177,33 @@ end
 
 function GardenModel:setBoundaryPadding(padding)
     self.rockSettings.boundaryPadding = math.max(0, padding)
+end
+
+function GardenModel:setRakeProfile(index)
+    if index >= 1 and index <= #self.rakeProfiles then
+        self.selectedRakeProfile = index
+    end
+end
+
+function GardenModel:getCurrentRakeProfile()
+    return self.rakeProfiles[self.selectedRakeProfile]
+end
+
+function GardenModel:updateUIMousePosition(x, y)
+    self.ui.mouseX = x
+    self.ui.mouseY = y
+end
+
+function GardenModel:setUIHover(element)
+    self.ui.hoveredElement = element
+end
+
+function GardenModel:setUIPressed(element)
+    self.ui.pressedElement = element
+end
+
+function GardenModel:setDraggingSlider(slider)
+    self.ui.draggingSlider = slider
 end
 
 return GardenModel

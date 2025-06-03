@@ -1,5 +1,6 @@
 local GardenView = {}
 GardenView.__index = GardenView
+local UI = require('src/utils/UI')
 
 function GardenView:new()
     local view = setmetatable({}, GardenView)
@@ -53,16 +54,16 @@ function GardenView:drawRocks(model)
 end
 
 function GardenView:drawRakePattern(model)
-    love.graphics.setColor(0.8, 0.75, 0.6)
-    love.graphics.setLineWidth(1)
-    
     for _, stroke in ipairs(model.rakePattern) do
         local age = love.timer.getTime() - stroke.time
         local alpha = math.max(0, 1 - age / 10)
         love.graphics.setColor(0.8, 0.75, 0.6, alpha)
         
-        for i = -2, 2 do
-            local offset = i * 3
+        local profile = stroke.profile or {spacing = 4, thickness = 2, length = 20}
+        local numLines = math.floor(profile.length / profile.spacing)
+        
+        for i = -math.floor(numLines/2), math.floor(numLines/2) do
+            local offset = i * profile.spacing
             local dx = stroke.y2 - stroke.y1
             local dy = stroke.x1 - stroke.x2
             local length = math.sqrt(dx^2 + dy^2)
@@ -71,6 +72,7 @@ function GardenView:drawRakePattern(model)
                 dy = dy / length * offset
             end
             
+            love.graphics.setLineWidth(profile.thickness)
             love.graphics.line(
                 self.gardenX + stroke.x1 + dx,
                 self.gardenY + stroke.y1 + dy,
@@ -82,54 +84,67 @@ function GardenView:drawRakePattern(model)
 end
 
 function GardenView:drawUI(model)
-    self:drawToolsPanel(model)
-    self:drawRockControlPanel(model)
-    self:drawStatusPanel(model)
+    self:drawToolPanel(model)
+    self:drawRakePanel(model)
+    self:drawRockPanel(model)
     self:drawBoundaryVisualization(model)
 end
 
-function GardenView:drawToolsPanel(model)
-    love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
-    love.graphics.rectangle("fill", 10, 10, 200, 120)
+function GardenView:drawToolPanel(model)
+    UI.panel(10, 10, 180, 120, "Tools")
     
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("Tools:", 20, 20)
-    love.graphics.print("R - Rock placement", 20, 40)
-    love.graphics.print("K - Rake tool", 20, 55)
-    love.graphics.print("C - Clear rake patterns", 20, 70)
-    love.graphics.print("G - Generate rocks", 20, 85)
-    love.graphics.print("X - Clear all rocks", 20, 100)
-    love.graphics.print("Current: " .. model.selectedTool, 20, 115)
+    local rockActive = model.selectedTool == "rock"
+    local rakeActive = model.selectedTool == "rake"
+    local rockHovered = model.ui.hoveredElement == "rock_tool"
+    local rakeHovered = model.ui.hoveredElement == "rake_tool"
+    
+    UI.toggleButton(20, 45, 70, 25, "Rock", rockActive, rockHovered)
+    UI.toggleButton(100, 45, 70, 25, "Rake", rakeActive, rakeHovered)
+    
+    local clearHovered = model.ui.hoveredElement == "clear_patterns"
+    local generateHovered = model.ui.hoveredElement == "generate_rocks"
+    local clearAllHovered = model.ui.hoveredElement == "clear_rocks"
+    
+    UI.button(20, 80, 45, 20, "Clear", false, clearHovered)
+    UI.button(75, 80, 45, 20, "Gen", false, generateHovered)
+    UI.button(130, 80, 40, 20, "Clear All", false, clearAllHovered)
 end
 
-function GardenView:drawRockControlPanel(model)
-    local panelX = 220
-    local panelY = 10
-    local panelWidth = 180
-    local panelHeight = 140
+function GardenView:drawRakePanel(model)
+    UI.panel(200, 10, 160, 120, "Rake Profiles")
     
-    love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
-    love.graphics.rectangle("fill", panelX, panelY, panelWidth, panelHeight)
-    
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("Rock Controls:", panelX + 10, panelY + 10)
-    love.graphics.print("Size: " .. model.rockSettings.currentSize, panelX + 10, panelY + 30)
-    love.graphics.print("Max: " .. model.rockSettings.maxRocks, panelX + 10, panelY + 50)
-    love.graphics.print("Min Dist: " .. model.rockSettings.minDistance, panelX + 10, panelY + 70)
-    love.graphics.print("Padding: " .. model.rockSettings.boundaryPadding, panelX + 10, panelY + 90)
-    love.graphics.print("1/2 - Size ±  5/6 - Dist ±", panelX + 10, panelY + 110)
-    love.graphics.print("3/4 - Max ±   7/8 - Pad ±", panelX + 10, panelY + 125)
+    for i, profile in ipairs(model.rakeProfiles) do
+        local y = 40 + (i - 1) * 20
+        local active = model.selectedRakeProfile == i
+        local hovered = model.ui.hoveredElement == "rake_profile_" .. i
+        
+        UI.toggleButton(210, y, 140, 18, profile.name, active, hovered)
+    end
 end
 
-function GardenView:drawStatusPanel(model)
-    love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
-    love.graphics.rectangle("fill", 10, love.graphics.getHeight() - 60, 200, 50)
+function GardenView:drawRockPanel(model)
+    UI.panel(370, 10, 200, 140, "Rock Controls")
     
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("Rocks: " .. #model.rocks .. "/" .. model.rockSettings.maxRocks, 20, love.graphics.getHeight() - 50)
-    love.graphics.print("Patterns: " .. #model.rakePattern, 20, love.graphics.getHeight() - 35)
-    love.graphics.print("Size Range: " .. model.rockSettings.minSize .. "-" .. model.rockSettings.maxSize, 20, love.graphics.getHeight() - 20)
+    local sizeHovered = model.ui.hoveredElement == "size_slider"
+    local sizeDragging = model.ui.draggingSlider == "size_slider"
+    UI.slider(380, 50, 160, 15, model.rockSettings.currentSize, 
+              model.rockSettings.minSize, model.rockSettings.maxSize, 
+              "Size", sizeHovered, sizeDragging)
+    
+    local maxHovered = model.ui.hoveredElement == "max_slider"
+    local maxDragging = model.ui.draggingSlider == "max_slider"
+    UI.slider(380, 80, 160, 15, model.rockSettings.maxRocks, 
+              10, 100, "Max Rocks", maxHovered, maxDragging)
+    
+    local distHovered = model.ui.hoveredElement == "distance_slider"
+    local distDragging = model.ui.draggingSlider == "distance_slider"
+    UI.slider(380, 110, 160, 15, model.rockSettings.minDistance, 
+              0, 30, "Min Distance", distHovered, distDragging)
+    
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("Rocks: " .. #model.rocks .. "/" .. model.rockSettings.maxRocks, 380, 130)
 end
+
 
 function GardenView:drawBoundaryVisualization(model)
     local padding = model.rockSettings.boundaryPadding
@@ -155,6 +170,37 @@ end
 
 function GardenView:screenToGarden(x, y)
     return x - self.gardenX, y - self.gardenY
+end
+
+function GardenView:getUIElementAt(x, y, model)
+    if UI.isPointInRect(x, y, 20, 45, 70, 25) then
+        return "rock_tool"
+    elseif UI.isPointInRect(x, y, 100, 45, 70, 25) then
+        return "rake_tool"
+    elseif UI.isPointInRect(x, y, 20, 80, 45, 20) then
+        return "clear_patterns"
+    elseif UI.isPointInRect(x, y, 75, 80, 45, 20) then
+        return "generate_rocks"
+    elseif UI.isPointInRect(x, y, 130, 80, 40, 20) then
+        return "clear_rocks"
+    end
+    
+    for i = 1, #model.rakeProfiles do
+        local y_pos = 40 + (i - 1) * 20
+        if UI.isPointInRect(x, y, 210, y_pos, 140, 18) then
+            return "rake_profile_" .. i
+        end
+    end
+    
+    if UI.isPointInRect(x, y, 380, 50, 160, 15) then
+        return "size_slider"
+    elseif UI.isPointInRect(x, y, 380, 80, 160, 15) then
+        return "max_slider"
+    elseif UI.isPointInRect(x, y, 380, 110, 160, 15) then
+        return "distance_slider"
+    end
+    
+    return nil
 end
 
 return GardenView
