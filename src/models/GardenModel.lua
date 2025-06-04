@@ -25,10 +25,10 @@ function GardenModel:new()
     }
     
     model.rakeProfiles = {
-        {name = "Fine", spacing = 2, thickness = 1, length = 15},
-        {name = "Medium", spacing = 4, thickness = 2, length = 20},
-        {name = "Coarse", spacing = 6, thickness = 3, length = 25},
-        {name = "Wide", spacing = 8, thickness = 2, length = 30}
+        {name = "Fine", spacing = 2, thickness = 1, length = 15, contourSpacing = 10},
+        {name = "Medium", spacing = 4, thickness = 2, length = 20, contourSpacing = 20},
+        {name = "Coarse", spacing = 6, thickness = 3, length = 25, contourSpacing = 30},
+        {name = "Wide", spacing = 8, thickness = 2, length = 30, contourSpacing = 40}
     }
     model.selectedRakeProfile = 1
     
@@ -36,7 +36,8 @@ function GardenModel:new()
         {name = "Straight", id = "straight"},
         {name = "Circular", id = "circular"},
         {name = "Spiral", id = "spiral"},
-        {name = "Wave", id = "wave"}
+        {name = "Wave", id = "wave"},
+        {name = "Topographic", id = "topographic"}
     }
     model.selectedPatternShape = 1
     
@@ -51,6 +52,24 @@ function GardenModel:new()
         pressedElement = nil,
         draggingSlider = nil
     }
+    
+    model.renderSettings = {
+        useSandShader = true,
+        useRockShader = true,
+        sandPixelSize = 4.0,
+        sandGrainIntensity = 0.3,
+        sandColorVariation = 0.2,
+        selectedRockMaterial = "granite",
+        contourSpacing = 20  -- Default contour spacing
+    }
+    
+    model.rockMaterials = {
+        {name = "Granite", id = "granite"},
+        {name = "Sandstone", id = "sandstone"},
+        {name = "Marble", id = "marble"},
+        {name = "Slate", id = "slate"}
+    }
+    model.selectedRockMaterial = 1
     
     return model
 end
@@ -186,6 +205,12 @@ function GardenModel:generatePatternShape(centerX, centerY, size)
     local shape = self.patternShapes[self.selectedPatternShape]
     local segments = {}
     
+    -- Find the selected rock if any
+    local selectedRock = nil
+    if self.selectedTool == "rock" and self.draggedRock then
+        selectedRock = self.rocks[self.draggedRock]
+    end
+    
     if shape.id == "straight" then
         segments = RakePatterns.straight(
             centerX - size/2, centerY, 
@@ -202,6 +227,13 @@ function GardenModel:generatePatternShape(centerX, centerY, size)
             centerX + size/2, centerY, 
             profile, size/8, 0.02
         )
+    elseif shape.id == "topographic" then
+        -- Use the selected rock as the hub if available
+        local hubX = selectedRock and selectedRock.x or centerX
+        local hubY = selectedRock and selectedRock.y or centerY
+        local startRadius = selectedRock and (selectedRock.size/2 + 20) or 20
+        local endRadius = size/2
+        segments = RakePatterns.topographic(hubX, hubY, startRadius, endRadius, profile, 10, selectedRock)
     end
     
     local filteredSegments = RakePatterns.avoidObstacles(segments, self.rocks)
@@ -322,7 +354,10 @@ function GardenModel:setRakeProfile(index)
 end
 
 function GardenModel:getCurrentRakeProfile()
-    return self.rakeProfiles[self.selectedRakeProfile]
+    local profile = self.rakeProfiles[self.selectedRakeProfile]
+    -- Override the profile's contour spacing with the user setting
+    profile.contourSpacing = self.renderSettings.contourSpacing
+    return profile
 end
 
 function GardenModel:updateUIMousePosition(x, y)
@@ -340,6 +375,142 @@ end
 
 function GardenModel:setDraggingSlider(slider)
     self.ui.draggingSlider = slider
+end
+
+function GardenModel:setRockMaterial(index)
+    if index >= 1 and index <= #self.rockMaterials then
+        self.selectedRockMaterial = index
+        self.renderSettings.selectedRockMaterial = self.rockMaterials[index].id
+    end
+end
+
+function GardenModel:setSandPixelSize(size)
+    self.renderSettings.sandPixelSize = math.max(1, math.min(16, size))
+end
+
+function GardenModel:setSandGrainIntensity(intensity)
+    self.renderSettings.sandGrainIntensity = math.max(0, math.min(1, intensity))
+end
+
+function GardenModel:setSandColorVariation(variation)
+    self.renderSettings.sandColorVariation = math.max(0, math.min(1, variation))
+end
+
+function GardenModel:toggleSandShader()
+    self.renderSettings.useSandShader = not self.renderSettings.useSandShader
+end
+
+function GardenModel:toggleRockShader()
+    self.renderSettings.useRockShader = not self.renderSettings.useRockShader
+end
+
+function GardenModel:setContourSpacing(spacing)
+    self.renderSettings.contourSpacing = math.max(5, math.min(100, spacing))
+end
+
+function GardenModel:update(dt)
+    -- Update UI state
+    local mouseX, mouseY = love.mouse.getPosition()
+    self.ui.hoveredElement = self.view:getUIElementAt(mouseX, mouseY, self)
+    
+    -- Handle mouse input
+    if love.mouse.isDown(1) then
+        if self.ui.hoveredElement == "rock_tool" then
+            self.currentTool = "rock"
+        elseif self.ui.hoveredElement == "rake_tool" then
+            self.currentTool = "rake"
+        elseif self.ui.hoveredElement == "clear_patterns" then
+            self:clearPatterns()
+        elseif self.ui.hoveredElement == "generate_rocks" then
+            self:generateRocks()
+        elseif self.ui.hoveredElement == "clear_rocks" then
+            self:clearRocks()
+        elseif self.ui.hoveredElement:match("^pattern_mode_") then
+            local mode = self.ui.hoveredElement:match("^pattern_mode_(.+)$")
+            self.patternMode = mode
+        elseif self.ui.hoveredElement:match("^rake_profile_") then
+            local index = tonumber(self.ui.hoveredElement:match("^rake_profile_(%d+)$"))
+            if index then
+                self.selectedRakeProfile = index
+            end
+        elseif self.ui.hoveredElement:match("^pattern_shape_") then
+            local index = tonumber(self.ui.hoveredElement:match("^pattern_shape_(%d+)$"))
+            if index then
+                self.selectedPatternShape = index
+            end
+        elseif self.ui.hoveredElement:match("^rock_material_") then
+            local index = tonumber(self.ui.hoveredElement:match("^rock_material_(%d+)$"))
+            if index then
+                self.selectedRockMaterial = index
+            end
+        elseif self.ui.hoveredElement == "sand_shader_toggle" then
+            self.renderSettings.useSandShader = not self.renderSettings.useSandShader
+        elseif self.ui.hoveredElement == "rock_shader_toggle" then
+            self.renderSettings.useRockShader = not self.renderSettings.useRockShader
+        elseif self.ui.hoveredElement == "size_slider" then
+            self.ui.draggingSlider = "size_slider"
+            local sliderX = 400
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.rockSettings.size = value * 100 + 20
+        elseif self.ui.hoveredElement == "max_slider" then
+            self.ui.draggingSlider = "max_slider"
+            local sliderX = 400
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.rockSettings.maxRocks = math.floor(value * 50) + 1
+        elseif self.ui.hoveredElement == "distance_slider" then
+            self.ui.draggingSlider = "distance_slider"
+            local sliderX = 400
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.rockSettings.minDistance = value * 200 + 50
+        elseif self.ui.hoveredElement == "sand_pixel_slider" then
+            self.ui.draggingSlider = "sand_pixel_slider"
+            local sliderX = 610
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.renderSettings.sandPixelSize = value * 4 + 1
+        elseif self.ui.hoveredElement == "sand_grain_slider" then
+            self.ui.draggingSlider = "sand_grain_slider"
+            local sliderX = 610
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.renderSettings.sandGrainSize = value * 0.5 + 0.1
+        elseif self.ui.hoveredElement == "sand_variation_slider" then
+            self.ui.draggingSlider = "sand_variation_slider"
+            local sliderX = 610
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.renderSettings.sandVariation = value * 0.5
+        elseif self.ui.hoveredElement == "contour_spacing_slider" then
+            self.ui.draggingSlider = "contour_spacing_slider"
+            local sliderX = 210
+            local sliderWidth = 160
+            local value = (mouseX - sliderX) / sliderWidth
+            value = math.max(0, math.min(1, value))
+            self.renderSettings.contourSpacing = value * 95 + 5
+        end
+    else
+        self.ui.draggingSlider = nil
+    end
+    
+    -- Update shaders
+    if self.renderSettings.useSandShader then
+        self.sandShader:send("pixelSize", self.renderSettings.sandPixelSize)
+        self.sandShader:send("grainSize", self.renderSettings.sandGrainSize)
+        self.sandShader:send("variation", self.renderSettings.sandVariation)
+    end
+    
+    if self.renderSettings.useRockShader then
+        self.rockShader:send("time", love.timer.getTime())
+    end
 end
 
 return GardenModel

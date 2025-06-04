@@ -289,4 +289,32 @@ function RakePatterns.lineCircleIntersection(x1, y1, x2, y2, cx, cy, r)
     end
 end
 
+function RakePatterns.topographic(centerX, centerY, startRadius, endRadius, profile, numContours, hubRock)
+    local segments = {}
+    
+    -- Calculate number of contours based on the spacing
+    local totalDistance = endRadius - startRadius
+    local numContours = math.floor(totalDistance / profile.contourSpacing)
+    
+    -- Generate concentric circles with increasing radius
+    for i = 0, numContours do
+        local currentRadius = startRadius + (i * profile.contourSpacing)
+        local contourSegments = RakePatterns.circular(centerX, centerY, currentRadius, profile)
+        
+        -- Filter segments to avoid the hub rock
+        if hubRock then
+            local filteredSegments = RakePatterns.avoidObstacles(contourSegments, {hubRock})
+            for _, segment in ipairs(filteredSegments) do
+                table.insert(segments, segment)
+            end
+        else
+            for _, segment in ipairs(contourSegments) do
+                table.insert(segments, segment)
+            end
+        end
+    end
+    
+    return segments
+end
+
 return RakePatterns

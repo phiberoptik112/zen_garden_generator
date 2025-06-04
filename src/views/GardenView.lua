@@ -1,6 +1,7 @@
 local GardenView = {}
 GardenView.__index = GardenView
 local UI = require('src/utils/UI')
+local Renderer = require('src/utils/Renderer')
 
 function GardenView:new()
     local view = setmetatable({}, GardenView)
@@ -8,27 +9,24 @@ function GardenView:new()
     view.gardenX = 50
     view.gardenY = 50
     
-    view.sandTexture = love.graphics.newCanvas(800, 600)
-    love.graphics.setCanvas(view.sandTexture)
-    love.graphics.clear(0.9, 0.85, 0.7, 1)
+    view.renderer = Renderer:new()
     
-    for i = 1, 800 do
-        for j = 1, 600 do
-            if math.random() < 0.1 then
-                local brightness = 0.8 + math.random() * 0.1
-                love.graphics.setColor(brightness, brightness * 0.9, brightness * 0.7)
-                love.graphics.points(i, j)
-            end
-        end
+    local success, error = pcall(function()
+        view.renderer:loadShaders()
+    end)
+    
+    if not success then
+        print("Warning: Could not load shaders - " .. (error or "unknown error"))
     end
-    love.graphics.setCanvas()
+    
+    view.renderer:createSandTexture(800, 600)
     
     return view
 end
 
 function GardenView:draw(model)
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.draw(self.sandTexture, self.gardenX, self.gardenY)
+    self:updateRenderer(model)
+    self.renderer:drawSand(self.gardenX, self.gardenY)
     
     love.graphics.setColor(0.6, 0.5, 0.4)
     love.graphics.setLineWidth(2)
@@ -41,16 +39,22 @@ end
 
 function GardenView:drawRocks(model)
     for _, rock in ipairs(model.rocks) do
-        love.graphics.setColor(rock.color)
-        love.graphics.circle("fill", self.gardenX + rock.x, self.gardenY + rock.y, rock.size / 2)
-        
-        love.graphics.setColor(rock.color[1] * 0.7, rock.color[2] * 0.7, rock.color[3] * 0.7)
-        love.graphics.setLineWidth(2)
-        love.graphics.circle("line", self.gardenX + rock.x, self.gardenY + rock.y, rock.size / 2)
-        
-        love.graphics.setColor(rock.color[1] * 1.3, rock.color[2] * 1.3, rock.color[3] * 1.3)
-        love.graphics.circle("fill", self.gardenX + rock.x - rock.size * 0.15, self.gardenY + rock.y - rock.size * 0.15, rock.size * 0.1)
+        local material = model.renderSettings.selectedRockMaterial
+        if model.renderSettings.useRockShader then
+            self.renderer:drawRock(self.gardenX + rock.x, self.gardenY + rock.y, rock.size / 2, material)
+        else
+            love.graphics.setColor(rock.color)
+            love.graphics.circle("fill", self.gardenX + rock.x, self.gardenY + rock.y, rock.size / 2)
+            
+            love.graphics.setColor(rock.color[1] * 0.7, rock.color[2] * 0.7, rock.color[3] * 0.7)
+            love.graphics.setLineWidth(2)
+            love.graphics.circle("line", self.gardenX + rock.x, self.gardenY + rock.y, rock.size / 2)
+            
+            love.graphics.setColor(rock.color[1] * 1.3, rock.color[2] * 1.3, rock.color[3] * 1.3)
+            love.graphics.circle("fill", self.gardenX + rock.x - rock.size * 0.15, self.gardenY + rock.y - rock.size * 0.15, rock.size * 0.1)
+        end
     end
+    love.graphics.setColor(1, 1, 1)
 end
 
 function GardenView:drawRakePattern(model)
@@ -64,8 +68,7 @@ function GardenView:drawRakePattern(model)
 end
 
 function GardenView:drawStroke(stroke)
-    local age = love.timer.getTime() - stroke.time
-    local alpha = math.max(0, (stroke.alpha or 1.0) * (1 - age / 15))
+    local alpha = stroke.alpha or 1.0
     
     if stroke.segments then
         for _, segment in ipairs(stroke.segments) do
@@ -105,8 +108,7 @@ function GardenView:drawStroke(stroke)
 end
 
 function GardenView:drawProgressiveStroke(progressiveStroke)
-    local age = love.timer.getTime() - progressiveStroke.points[1].time
-    local alpha = math.max(0, (progressiveStroke.alpha or 1.0) * (1 - age / 15))
+    local alpha = progressiveStroke.alpha or 1.0
     
     for _, segment in ipairs(progressiveStroke.segments) do
         love.graphics.setColor(0.7, 0.65, 0.5, alpha)
@@ -136,6 +138,7 @@ function GardenView:drawUI(model)
     self:drawToolPanel(model)
     self:drawRakePanel(model)
     self:drawRockPanel(model)
+    self:drawRenderPanel(model)
     self:drawBoundaryVisualization(model)
 end
 
@@ -215,29 +218,86 @@ function GardenView:drawRakePanel(model)
             love.graphics.print(shape.name, x + (70 - textWidth) / 2, y + (18 - textHeight) / 2)
         end
     end
+    
+    -- Add contour spacing slider for topographic pattern
+    if model.patternMode == "shape" and model.patternShapes[model.selectedPatternShape].id == "topographic" then
+        local y = 190 + math.ceil(#model.patternShapes / 2) * 20 + 10
+        local hovered = model.ui.hoveredElement == "contour_spacing_slider"
+        local dragging = model.ui.draggingSlider == "contour_spacing_slider"
+        
+        UI.slider(210, y, 160, 15, model.renderSettings.contourSpacing,
+                 5, 100, "Contour Spacing", hovered, dragging)
+    end
 end
 
 function GardenView:drawRockPanel(model)
-    UI.panel(390, 10, 200, 140, "Rock Controls")
+    UI.panel(390, 10, 200, 180, "Rock Controls")
+    
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("Material:", 400, 40)
+    
+    for i, material in ipairs(model.rockMaterials) do
+        local x = 400 + ((i - 1) % 2) * 90
+        local y = 55 + math.floor((i - 1) / 2) * 20
+        local active = model.selectedRockMaterial == i
+        local hovered = model.ui.hoveredElement == "rock_material_" .. i
+        
+        UI.toggleButton(x, y, 85, 18, material.name, active, hovered)
+    end
     
     local sizeHovered = model.ui.hoveredElement == "size_slider"
     local sizeDragging = model.ui.draggingSlider == "size_slider"
-    UI.slider(400, 50, 160, 15, model.rockSettings.currentSize, 
+    UI.slider(400, 110, 160, 15, model.rockSettings.currentSize, 
               model.rockSettings.minSize, model.rockSettings.maxSize, 
               "Size", sizeHovered, sizeDragging)
     
     local maxHovered = model.ui.hoveredElement == "max_slider"
     local maxDragging = model.ui.draggingSlider == "max_slider"
-    UI.slider(400, 80, 160, 15, model.rockSettings.maxRocks, 
+    UI.slider(400, 130, 160, 15, model.rockSettings.maxRocks, 
               10, 100, "Max Rocks", maxHovered, maxDragging)
     
     local distHovered = model.ui.hoveredElement == "distance_slider"
     local distDragging = model.ui.draggingSlider == "distance_slider"
-    UI.slider(400, 110, 160, 15, model.rockSettings.minDistance, 
+    UI.slider(400, 150, 160, 15, model.rockSettings.minDistance, 
               0, 30, "Min Distance", distHovered, distDragging)
     
     love.graphics.setColor(0, 0, 0)
-    love.graphics.print("Rocks: " .. #model.rocks .. "/" .. model.rockSettings.maxRocks, 400, 130)
+    love.graphics.print("Rocks: " .. #model.rocks .. "/" .. model.rockSettings.maxRocks, 400, 170)
+end
+
+function GardenView:drawRenderPanel(model)
+    UI.panel(600, 10, 200, 200, "Render Settings")
+    
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("Shaders:", 610, 40)
+    
+    local sandShaderHovered = model.ui.hoveredElement == "sand_shader_toggle"
+    local rockShaderHovered = model.ui.hoveredElement == "rock_shader_toggle"
+    
+    UI.toggleButton(610, 55, 80, 18, "Sand", model.renderSettings.useSandShader, sandShaderHovered)
+    UI.toggleButton(700, 55, 80, 18, "Rock", model.renderSettings.useRockShader, rockShaderHovered)
+    
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("Sand Parameters:", 610, 85)
+    
+    local pixelHovered = model.ui.hoveredElement == "sand_pixel_slider"
+    local pixelDragging = model.ui.draggingSlider == "sand_pixel_slider"
+    UI.slider(610, 105, 160, 15, model.renderSettings.sandPixelSize, 
+              1, 16, "Pixel Size", pixelHovered, pixelDragging)
+    
+    local grainHovered = model.ui.hoveredElement == "sand_grain_slider"
+    local grainDragging = model.ui.draggingSlider == "sand_grain_slider"
+    UI.slider(610, 125, 160, 15, model.renderSettings.sandGrainIntensity, 
+              0, 1, "Grain", grainHovered, grainDragging)
+    
+    local variationHovered = model.ui.hoveredElement == "sand_variation_slider"
+    local variationDragging = model.ui.draggingSlider == "sand_variation_slider"
+    UI.slider(610, 145, 160, 15, model.renderSettings.sandColorVariation, 
+              0, 1, "Variation", variationHovered, variationDragging)
+    
+    love.graphics.setColor(0, 0, 0)
+    love.graphics.print("P - Progressive  S - Shape  F - Freehand", 610, 175)
+    love.graphics.print("Mode: " .. model.patternMode, 610, 190)
 end
 
 
@@ -303,15 +363,156 @@ function GardenView:getUIElementAt(x, y, model)
         end
     end
     
-    if UI.isPointInRect(x, y, 400, 50, 160, 15) then
+    -- Check for contour spacing slider
+    if model.patternMode == "shape" and model.patternShapes[model.selectedPatternShape].id == "topographic" then
+        local slider_y = 190 + math.ceil(#model.patternShapes / 2) * 20 + 10
+        if UI.isPointInRect(x, y, 210, slider_y, 160, 15) then
+            return "contour_spacing_slider"
+        end
+    end
+    
+    for i = 1, #model.rockMaterials do
+        local button_x = 400 + ((i - 1) % 2) * 90
+        local button_y = 55 + math.floor((i - 1) / 2) * 20
+        if UI.isPointInRect(x, y, button_x, button_y, 85, 18) then
+            return "rock_material_" .. i
+        end
+    end
+    
+    if UI.isPointInRect(x, y, 610, 55, 80, 18) then
+        return "sand_shader_toggle"
+    elseif UI.isPointInRect(x, y, 700, 55, 80, 18) then
+        return "rock_shader_toggle"
+    end
+    
+    if UI.isPointInRect(x, y, 400, 110, 160, 15) then
         return "size_slider"
-    elseif UI.isPointInRect(x, y, 400, 80, 160, 15) then
+    elseif UI.isPointInRect(x, y, 400, 130, 160, 15) then
         return "max_slider"
-    elseif UI.isPointInRect(x, y, 400, 110, 160, 15) then
+    elseif UI.isPointInRect(x, y, 400, 150, 160, 15) then
         return "distance_slider"
+    elseif UI.isPointInRect(x, y, 610, 105, 160, 15) then
+        return "sand_pixel_slider"
+    elseif UI.isPointInRect(x, y, 610, 125, 160, 15) then
+        return "sand_grain_slider"
+    elseif UI.isPointInRect(x, y, 610, 145, 160, 15) then
+        return "sand_variation_slider"
     end
     
     return nil
+end
+
+function GardenView:updateRenderer(model)
+    if self.renderer then
+        self.renderer:setSandParameter("pixelSize", model.renderSettings.sandPixelSize)
+        self.renderer:setSandParameter("grainIntensity", model.renderSettings.sandGrainIntensity)
+        self.renderer:setSandParameter("colorVariation", model.renderSettings.sandColorVariation)
+        
+        if model.renderSettings.useSandShader then
+            self.renderer:createSandTexture(800, 600)
+        end
+    end
+end
+
+function GardenView:drawSettingsPanel(model)
+    local UI = require('src/utils/UI')
+    local x = 10
+    local y = 10
+    local width = 200
+    local height = 400
+    
+    UI.panel(x, y, width, height, "Settings")
+    
+    y = y + 30
+    
+    -- Rock Settings
+    UI.panel(x + 5, y, width - 10, 120, "Rock Settings")
+    y = y + 25
+    
+    local sliderHeight = 20
+    local sliderWidth = width - 30
+    
+    -- Rock Size Slider
+    UI.slider(x + 15, y, sliderWidth, sliderHeight,
+        model.rockSettings.currentSize,
+        model.rockSettings.minSize,
+        model.rockSettings.maxSize,
+        "Rock Size",
+        model.ui.hoveredElement == "rockSizeSlider",
+        model.ui.draggingSlider == "rockSizeSlider")
+    y = y + 30
+    
+    -- Max Rocks Slider
+    UI.slider(x + 15, y, sliderWidth, sliderHeight,
+        model.rockSettings.maxRocks,
+        1, 100,
+        "Max Rocks",
+        model.ui.hoveredElement == "maxRocksSlider",
+        model.ui.draggingSlider == "maxRocksSlider")
+    y = y + 30
+    
+    -- Min Distance Slider
+    UI.slider(x + 15, y, sliderWidth, sliderHeight,
+        model.rockSettings.minDistance,
+        0, 50,
+        "Min Distance",
+        model.ui.hoveredElement == "minDistanceSlider",
+        model.ui.draggingSlider == "minDistanceSlider")
+    y = y + 30
+    
+    -- Rake Settings
+    y = y + 20
+    UI.panel(x + 5, y, width - 10, 150, "Rake Settings")
+    y = y + 25
+    
+    -- Rake Profile Selection
+    for i, profile in ipairs(model.rakeProfiles) do
+        local buttonWidth = (width - 30) / #model.rakeProfiles
+        UI.toggleButton(x + 15 + (i-1) * buttonWidth, y, buttonWidth - 5, 25,
+            profile.name,
+            model.selectedRakeProfile == i,
+            model.ui.hoveredElement == "rakeProfile" .. i)
+    end
+    y = y + 35
+    
+    -- Pattern Shape Selection
+    for i, shape in ipairs(model.patternShapes) do
+        local buttonWidth = (width - 30) / #model.patternShapes
+        UI.toggleButton(x + 15 + (i-1) * buttonWidth, y, buttonWidth - 5, 25,
+            shape.name,
+            model.selectedPatternShape == i,
+            model.ui.hoveredElement == "patternShape" .. i)
+    end
+    y = y + 35
+    
+    -- Contour Spacing Slider (only show for topographic pattern)
+    if model.patternShapes[model.selectedPatternShape].id == "topographic" then
+        UI.slider(x + 15, y, sliderWidth, sliderHeight,
+            model.renderSettings.contourSpacing,
+            5, 100,
+            "Contour Spacing",
+            model.ui.hoveredElement == "contourSpacingSlider",
+            model.ui.draggingSlider == "contourSpacingSlider")
+        y = y + 30
+    end
+    
+    -- Render Settings
+    y = y + 20
+    UI.panel(x + 5, y, width - 10, 100, "Render Settings")
+    y = y + 25
+    
+    -- Sand Shader Toggle
+    UI.toggleButton(x + 15, y, sliderWidth, 25,
+        "Sand Shader",
+        model.renderSettings.useSandShader,
+        model.ui.hoveredElement == "sandShaderToggle")
+    y = y + 30
+    
+    -- Rock Shader Toggle
+    UI.toggleButton(x + 15, y, sliderWidth, 25,
+        "Rock Shader",
+        model.renderSettings.useRockShader,
+        model.ui.hoveredElement == "rockShaderToggle")
 end
 
 return GardenView

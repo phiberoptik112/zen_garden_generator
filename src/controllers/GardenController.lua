@@ -24,6 +24,17 @@ function GardenController:mousepressed(x, y, button, istouch, presses)
             self:handleUIClick(uiElement, x, y)
             return
         end
+        
+        -- Handle rock selection and dragging
+        if self.model.selectedTool == "rock" then
+            local rockIndex = self.model:getRockAt(x, y)
+            if rockIndex then
+                self.model.dragging = true
+                self.model.draggedRock = rockIndex
+            else
+                self.model:addRock(x, y)
+            end
+        end
     end
     
     if not self.view:isInGarden(x, y, self.model) then
@@ -61,10 +72,9 @@ end
 
 function GardenController:mousereleased(x, y, button, istouch, presses)
     if button == 1 then
-        self.model:setUIPressed(nil)
-        self.model:setDraggingSlider(nil)
         self.model.dragging = false
         self.model.draggedRock = nil
+        self.model:setDraggingSlider(nil)
         
         if self.model.patternMode == "progressive" and self.raking then
             self.model:finishProgressiveStroke()
@@ -77,6 +87,7 @@ function GardenController:mousereleased(x, y, button, istouch, presses)
 end
 
 function GardenController:mousemoved(x, y, dx, dy, istouch)
+    self.model:updateMousePosition(x, y)
     self.model:updateUIMousePosition(x, y)
     
     local uiElement = self.view:getUIElementAt(x, y, self.model)
@@ -187,12 +198,29 @@ function GardenController:handleUIClick(element, x, y)
         if shapeIndex then
             self.model:setPatternShape(shapeIndex)
         end
+    elseif element:match("^rock_material_") then
+        local materialIndex = tonumber(element:match("%d+"))
+        if materialIndex then
+            self.model:setRockMaterial(materialIndex)
+        end
+    elseif element == "sand_shader_toggle" then
+        self.model:toggleSandShader()
+    elseif element == "rock_shader_toggle" then
+        self.model:toggleRockShader()
     elseif element == "size_slider" then
         self.model:setDraggingSlider("size_slider")
     elseif element == "max_slider" then
         self.model:setDraggingSlider("max_slider")
     elseif element == "distance_slider" then
         self.model:setDraggingSlider("distance_slider")
+    elseif element == "sand_pixel_slider" then
+        self.model:setDraggingSlider("sand_pixel_slider")
+    elseif element == "sand_grain_slider" then
+        self.model:setDraggingSlider("sand_grain_slider")
+    elseif element == "sand_variation_slider" then
+        self.model:setDraggingSlider("sand_variation_slider")
+    elseif element == "contour_spacing_slider" then
+        self.model:setDraggingSlider("contour_spacing_slider")
     end
 end
 
@@ -208,6 +236,18 @@ function GardenController:handleSliderDrag(sliderType, mouseX)
     elseif sliderType == "distance_slider" then
         local value = UI.getSliderValue(mouseX, 400, 160, 0, 30)
         self.model:setMinDistance(value)
+    elseif sliderType == "sand_pixel_slider" then
+        local value = UI.getSliderValue(mouseX, 610, 160, 1, 16)
+        self.model:setSandPixelSize(value)
+    elseif sliderType == "sand_grain_slider" then
+        local value = UI.getSliderValue(mouseX, 610, 160, 0, 1)
+        self.model:setSandGrainIntensity(value)
+    elseif sliderType == "sand_variation_slider" then
+        local value = UI.getSliderValue(mouseX, 610, 160, 0, 1)
+        self.model:setSandColorVariation(value)
+    elseif sliderType == "contour_spacing_slider" then
+        local value = UI.getSliderValue(mouseX, 610, 160, 5, 100)
+        self.model:setContourSpacing(value)
     end
 end
 
