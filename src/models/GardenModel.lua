@@ -32,6 +32,18 @@ function GardenModel:new()
     }
     model.selectedRakeProfile = 1
     
+    model.patternShapes = {
+        {name = "Straight", id = "straight"},
+        {name = "Circular", id = "circular"},
+        {name = "Spiral", id = "spiral"},
+        {name = "Wave", id = "wave"}
+    }
+    model.selectedPatternShape = 1
+    
+    model.patternMode = "freehand"
+    model.progressiveStrokes = {}
+    model.currentStroke = nil
+    
     model.ui = {
         mouseX = 0,
         mouseY = 0,
@@ -89,13 +101,137 @@ function GardenModel:addRakeStroke(x1, y1, x2, y2)
         x2 = x2,
         y2 = y2,
         time = love.timer.getTime(),
-        profile = profile
+        profile = profile,
+        segments = nil,
+        alpha = 1.0
     }
     table.insert(self.rakePattern, stroke)
 end
 
+function GardenModel:addProgressiveStroke(x, y)
+    if not self.currentStroke then
+        self.currentStroke = {
+            points = {{x = x, y = y, time = love.timer.getTime()}},
+            profile = self.rakeProfiles[self.selectedRakeProfile],
+            segments = {},
+            alpha = 1.0,
+            smoothness = 5
+        }
+        table.insert(self.progressiveStrokes, self.currentStroke)
+    else
+        table.insert(self.currentStroke.points, {x = x, y = y, time = love.timer.getTime()})
+        self:updateProgressiveStrokeSegments()
+    end
+end
+
+function GardenModel:finishProgressiveStroke()
+    if self.currentStroke then
+        self:updateProgressiveStrokeSegments()
+        self.currentStroke = nil
+    end
+end
+
+function GardenModel:updateProgressiveStrokeSegments()
+    if not self.currentStroke or #self.currentStroke.points < 2 then
+        return
+    end
+    
+    local RakePatterns = require('src/utils/RakePatterns')
+    self.currentStroke.segments = {}
+    
+    local smoothPoints = self:smoothStrokePath(self.currentStroke.points, self.currentStroke.smoothness)
+    
+    for i = 1, #smoothPoints - 1 do
+        local p1, p2 = smoothPoints[i], smoothPoints[i + 1]
+        local segments = RakePatterns.straight(p1.x, p1.y, p2.x, p2.y, self.currentStroke.profile)
+        
+        local filteredSegments = RakePatterns.avoidObstacles(segments, self.rocks)
+        
+        for _, segment in ipairs(filteredSegments) do
+            table.insert(self.currentStroke.segments, segment)
+        end
+    end
+end
+
+function GardenModel:smoothStrokePath(points, smoothness)
+    if #points < 3 then return points end
+    
+    local smoothed = {points[1]}
+    
+    for i = 2, #points - 1 do
+        local prev = points[i - 1]
+        local curr = points[i]
+        local next = points[i + 1]
+        
+        local weight = 1 / smoothness
+        local x = curr.x * (1 - 2 * weight) + prev.x * weight + next.x * weight
+        local y = curr.y * (1 - 2 * weight) + prev.y * weight + next.y * weight
+        
+        table.insert(smoothed, {x = x, y = y, time = curr.time})
+    end
+    
+    table.insert(smoothed, points[#points])
+    return smoothed
+end
+
 function GardenModel:clearRakePattern()
     self.rakePattern = {}
+    self.progressiveStrokes = {}
+    self.currentStroke = nil
+end
+
+function GardenModel:generatePatternShape(centerX, centerY, size)
+    local RakePatterns = require('src/utils/RakePatterns')
+    local profile = self.rakeProfiles[self.selectedRakeProfile]
+    local shape = self.patternShapes[self.selectedPatternShape]
+    local segments = {}
+    
+    if shape.id == "straight" then
+        segments = RakePatterns.straight(
+            centerX - size/2, centerY, 
+            centerX + size/2, centerY, 
+            profile
+        )
+    elseif shape.id == "circular" then
+        segments = RakePatterns.circular(centerX, centerY, size/2, profile)
+    elseif shape.id == "spiral" then
+        segments = RakePatterns.spiral(centerX, centerY, 10, size/2, profile, 2)
+    elseif shape.id == "wave" then
+        segments = RakePatterns.wave(
+            centerX - size/2, centerY, 
+            centerX + size/2, centerY, 
+            profile, size/8, 0.02
+        )
+    end
+    
+    local filteredSegments = RakePatterns.avoidObstacles(segments, self.rocks)
+    
+    local stroke = {
+        x1 = centerX - size/2,
+        y1 = centerY,
+        x2 = centerX + size/2,
+        y2 = centerY,
+        time = love.timer.getTime(),
+        profile = profile,
+        segments = filteredSegments,
+        alpha = 1.0,
+        shape = shape.id
+    }
+    
+    table.insert(self.rakePattern, stroke)
+end
+
+function GardenModel:setPatternShape(index)
+    if index >= 1 and index <= #self.patternShapes then
+        self.selectedPatternShape = index
+    end
+end
+
+function GardenModel:setPatternMode(mode)
+    self.patternMode = mode
+    if mode ~= "progressive" then
+        self:finishProgressiveStroke()
+    end
 end
 
 function GardenModel:setSelectedTool(tool)

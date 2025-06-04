@@ -47,9 +47,15 @@ function GardenController:mousepressed(x, y, button, istouch, presses)
             self.model:removeRock(rockIndex)
         end
     elseif self.model.selectedTool == "rake" and button == 1 then
-        self.raking = true
-        self.lastRakeX = gardenX
-        self.lastRakeY = gardenY
+        if self.model.patternMode == "progressive" then
+            self.model:addProgressiveStroke(gardenX, gardenY)
+        elseif self.model.patternMode == "shape" then
+            self.model:generatePatternShape(gardenX, gardenY, 100)
+        else
+            self.raking = true
+            self.lastRakeX = gardenX
+            self.lastRakeY = gardenY
+        end
     end
 end
 
@@ -59,6 +65,11 @@ function GardenController:mousereleased(x, y, button, istouch, presses)
         self.model:setDraggingSlider(nil)
         self.model.dragging = false
         self.model.draggedRock = nil
+        
+        if self.model.patternMode == "progressive" and self.raking then
+            self.model:finishProgressiveStroke()
+        end
+        
         self.raking = false
         self.lastRakeX = nil
         self.lastRakeY = nil
@@ -89,7 +100,9 @@ function GardenController:mousemoved(x, y, dx, dy, istouch)
     end
     
     if self.raking and self.view:isInGarden(x, y, self.model) then
-        if self.lastRakeX and self.lastRakeY then
+        if self.model.patternMode == "progressive" then
+            self.model:addProgressiveStroke(gardenX, gardenY)
+        elseif self.lastRakeX and self.lastRakeY then
             local distance = math.sqrt((gardenX - self.lastRakeX)^2 + (gardenY - self.lastRakeY)^2)
             if distance > 5 then
                 self.model:addRakeStroke(self.lastRakeX, self.lastRakeY, gardenX, gardenY)
@@ -136,6 +149,12 @@ function GardenController:keypressed(key)
     elseif key == "8" then
         local newPadding = self.model.rockSettings.boundaryPadding + 5
         self.model:setBoundaryPadding(newPadding)
+    elseif key == "p" then
+        self.model:setPatternMode("progressive")
+    elseif key == "s" then
+        self.model:setPatternMode("shape")
+    elseif key == "f" then
+        self.model:setPatternMode("freehand")
     elseif key == "escape" then
         love.event.quit()
     end
@@ -153,10 +172,20 @@ function GardenController:handleUIClick(element, x, y)
         self.model:generateRandomRocks(count)
     elseif element == "clear_rocks" then
         self.model:clearAllRocks()
+    elseif element:match("^pattern_mode_") then
+        local mode = element:match("^pattern_mode_(.+)")
+        if mode then
+            self.model:setPatternMode(mode)
+        end
     elseif element:match("^rake_profile_") then
         local profileIndex = tonumber(element:match("%d+"))
         if profileIndex then
             self.model:setRakeProfile(profileIndex)
+        end
+    elseif element:match("^pattern_shape_") then
+        local shapeIndex = tonumber(element:match("%d+"))
+        if shapeIndex then
+            self.model:setPatternShape(shapeIndex)
         end
     elseif element == "size_slider" then
         self.model:setDraggingSlider("size_slider")
@@ -169,15 +198,15 @@ end
 
 function GardenController:handleSliderDrag(sliderType, mouseX)
     if sliderType == "size_slider" then
-        local value = UI.getSliderValue(mouseX, 380, 160, 
+        local value = UI.getSliderValue(mouseX, 400, 160, 
                                        self.model.rockSettings.minSize, 
                                        self.model.rockSettings.maxSize)
         self.model:setRockSize(value)
     elseif sliderType == "max_slider" then
-        local value = UI.getSliderValue(mouseX, 380, 160, 10, 100)
+        local value = UI.getSliderValue(mouseX, 400, 160, 10, 100)
         self.model:setMaxRocks(value)
     elseif sliderType == "distance_slider" then
-        local value = UI.getSliderValue(mouseX, 380, 160, 0, 30)
+        local value = UI.getSliderValue(mouseX, 400, 160, 0, 30)
         self.model:setMinDistance(value)
     end
 end
